@@ -1,0 +1,634 @@
+
+import java.text.SimpleDateFormat
+import java.util.Date
+
+pipeline{
+    parameters {
+        choice choices: ['continuous2'], description: 'Agente en el cual se ejecutaran las pruebas', name: 'AGENTE_EJECUCION'
+        choice choices: ['@RUTA_CRITICA_BACK','@BACK'], description: 'Tipo de prueba funcional a ejecutar', name: 'Tiporegresion'
+    }
+
+    agent {
+        label params.AGENTE_EJECUCION
+    }
+
+    options{
+        skipDefaultCheckout()
+    }
+
+    environment {
+        SCM_URL = "https://vostpmde37.proteccion.com.co:10443/GESTIONARMI_TEST/ms_rep_exp_resumen_anual_test.git"
+        SCM_CREDENTIALS = "Master_User"
+        SCM_BRANCH = "master"
+        NOMBRE_PROYECTO_GIT = "MS_REP_EXP_RESUMEN_ANUAL"
+        NOMBRE_TRANSACCION = "MS_REP_EXP_RESUMEN_ANUAL"
+        EMAIL_DEVELOPERS_FAIL = "kevin.alvarez@sofka.com.co"
+        EMAIL_DEVELOPERS_SUCCESS = "kevin.alvarez@sofka.com.co; juan.cardonan@sofka.com.co"
+        S3_URL = "https://s3.console.aws.amazon.com/s3/buckets/s3devsecopsjenkins01/jobs"
+        SONAR_URL = "https://sonarqube.proteccion.com.co:9000/dashboard?id=MS_REP_EXP_RESUMEN_ANUAL"
+        JAVA_HOME = "/usr/lib/jvm/java-11-openjdk-amd64"
+        TIPO_EJECUCION = ""
+        intTestURL = ""
+    }
+
+    stages{
+        stage('Obtener Fuentes'){
+            steps{
+                script{
+                    sh "git config --global --replace-all http.sslVerify false";
+                    checkout scm:([
+                        $class: 'GitSCM',
+                        branches: [[name: "${SCM_BRANCH}"]],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [],
+                        submoduleCfg: [],
+                        userRemoteConfigs: [[credentialsId: "${SCM_CREDENTIALS}", url: "${SCM_URL}"]]
+                    ]);
+                }
+            }
+        }
+
+stage('Ejecutar Pruebas') {
+    steps {
+        withCredentials([
+            usernamePassword(credentialsId: 'Artifactory-reader', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_PWD'),
+            usernamePassword(credentialsId: 'Repositorio-Maven', usernameVariable: 'MAVEN_USER', passwordVariable: 'MAVEN_PASSWORD'),
+            usernamePassword(credentialsId: 'DB_SOFKA', usernameVariable:'USER_DB_SOFKA', passwordVariable:'PASSWORD_DB_SOFKA')
+        ]) {
+            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                script {
+                    sh "pwd"
+                    sh "ls -l"
+                    sh "chmod 755 gradlew"
+                    sh "./gradlew clean"
+                    sh "rm -rf target copytarget"
+
+                    try {
+                        echo "SE INICIA LA EJECUCIÓN DE PRUEBAS - ${NOMBRE_TRANSACCION}"
+                        sh "./gradlew test -DTiporegresion=${Tiporegresion} --info"
+                        sh "mkdir -p copytarget"
+                        sh "[ -d target ] && [ \"\$(ls -A target)\" ] && cp -r target/* copytarget || echo 'No hay archivos en target, omitiendo copia'"
+                        TIPO_EJECUCION = "SinReintentos"
+                        currentBuild.result = 'SUCCESS'
+
+                    } catch (err) {
+                        TIPO_EJECUCION = "ConReintentos"
+                        sh "mkdir -p copytarget"
+                        sh "[ -d target ] && [ \"\$(ls -A target)\" ] && cp -r target/* copytarget || echo 'No hay archivos en target, omitiendo copia'"
+                        sh "./gradlew test -DTiporegresion=@PREPARACIONRERUN --info"
+                        echo "A CONTINUACIÓN SE MOSTRARÁ EL CONTENIDO DEL ARCHIVO EscenariosFallidos.txt"
+                        sh "./gradlew test -DTiporegresion=@RERUNFUN --info"
+                      }
+                  }
+              }
+          }
+       }
+    }
+
+                 stage('Analisis Sonar'){
+                           steps{
+                               withCredentials([
+                                   usernamePassword(credentialsId: 'Artifactory-reader', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_PWD'),
+                                   usernamePassword(credentialsId: 'Repositorio-Maven', usernameVariable: 'MAVEN_USER', passwordVariable: 'MAVEN_PASSWORD'),
+                                   usernamePassword(credentialsId: 'DB_SOFKA', usernameVariable:'USER_DB_SOFKA', passwordVariable:'PASSWORD_DB_SOFKA')
+                               ]) {
+                                   script {
+
+                                       withSonarQubeEnv('SonarQube_Proteccion') {
+                                           dir("${workspace}"){
+                                               sh "./gradlew -version"
+                                               sh "chmod 777 ./gradlew";
+                                               sh "./gradlew --info sonarqube -Dsonar.projectKey=${NOMBRE_TRANSACCION} -Dsonar.projectName=${NOMBRE_TRANSACCION} -Dsonar.projectVersion=${BUILD_ID} -x test"
+                                           }
+                                       }
+
+                                       timeout(time: 30, unit: 'MINUTES') {
+                                           def qg = waitForQualityGate()
+                                           print "Finished waiting"
+                                           QUALITY_GATE_RESULT = qg.status
+                                           catchError {
+                                               if (QUALITY_GATE_RESULT != 'OK') {
+                                                   error "Fallo en el quality gate de Sonar, estado: ${qg.status}"
+                                               }
+                                           }
+                                       }
+                                   }
+                               }
+                           }
+                         }
+
+        stage('Generar evidencia') {
+            steps {
+                script {
+                    catchError {
+                        publishHTML([
+                            allowMissing         : false,
+                            alwaysLinkToLastBuild: true,
+                            keepAll              : true,
+                            reportDir            : "${WORKSPACE}//copytarget//site//serenity",
+                            reportFiles          : 'index.html',
+                            reportName           : 'Reportes Pruebas',
+                            reportTitles         : ''
+                        ])
+                        s3Upload consoleLogLevel: 'SEVERE',
+                        dontSetBuildResultOnFailure: true,
+                        dontWaitForConcurrentBuildCompletion: false,
+                        entries:[[
+                            bucket               : 's3devsecopsjenkins01',
+                            excludedFile         : '',
+                            flatten              : true,
+                            gzipFiles            : false,
+                            keepForever          : true,
+                            managedArtifacts     : true,
+                            noUploadOnFailure    : false,
+                            selectedRegion       : 'us-east-1',
+                            showDirectlyInBrowser: true,
+                            sourceFile           : 'copytarget/site/serenity/*'
+                        ]] ,
+                        pluginFailureResultConstraint: 'UNSTABLE' ,
+                        profileName: 'S3-Reportes-QA' ,
+                        userMetadata:[]
+
+                        script {
+                            print "Los resultados de la ejecución los puede encontrar en la siguiente URL:";
+                            intTestURL = env.BUILD_URL + "cucumber-html-reports/overview-features.html";
+                            print intTestURL;
+                            print "Los resultados de la publicacion del reporte:";
+                            s3FullUrl = "${S3_URL}/${JOB_NAME}/${BUILD_ID}";
+                            print s3FullUrl;
+
+                        }
+                        echo 'Reporte Html realizado con exito'
+                    }
+                }
+            }
+        }
+
+        stage('Notificar'){
+            steps{
+                catchError{
+                    script{
+                        enviarCorreo(currentBuild.result, QUALITY_GATE_RESULT)
+                    }
+                }
+            }
+        }
+    }
+}
+
+def enviarCorreo(resultadoTest, resultadoSonar) {
+    def asunto = ""
+    def resultado = ""
+    def hero = ""
+    def recibe = ""
+    def urlEvidencia = "";
+    def nombreProyecto = "App Mobile"
+    def currentTime = new Date(currentBuild.timeInMillis)
+    def formato = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss")
+    def timeInicioPruebas = formato.format(currentTime)
+
+    if (TIPO_EJECUCION == 'SinReintentos') {
+        urlEvidencia = env.BUILD_URL + "Reportes_20Pruebas/"
+    } else {
+
+    }
+
+    if (currentBuild.result == 'UNSTABLE')
+        currentBuild.result = 'FAILURE'
+
+        if (resultadoTest == "SUCCESS") {
+            asunto = "EJECUCION EXITOSA ESCENARIOS - TRANSACCION ${NOMBRE_TRANSACCION}"
+            resultado = """<b class="execTitle" style="color:#032d9f;border:3px solid ;border-radius: 9px; padding:0px 12px 0 12px;">EJECUCION EXITOSA</b>"""
+            hero = "Todo va bien en la transacci&oacute;n. Para m&aacute;s detalles remitase a los enlaces en la parte inferior de este correo."
+            recibe = "${EMAIL_DEVELOPERS_SUCCESS}"
+        } else {
+            asunto = "EJECUCION FALLIDA ESCENARIOS - TRANSACCION ${NOMBRE_TRANSACCION}"
+            resultado = """<b class="execTitle" style="color:#c90000;border:3px solid #c90000;border-radius: 9px; padding:0px 12px 0 12px;">EJECUCION FALLIDA</b>"""
+            hero = "Se ha encontrado un error en la transacci&oacute;n. Para m&aacute;s detalles remitase a los enlaces en la parte inferior de este correo."
+            recibe = "${EMAIL_DEVELOPERS_FAIL}"
+        }
+
+        def body = """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+                                      <html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+                                          <head>
+                                              <meta http-equiv="Content-type" content="text/html; charset=utf-8" />
+                                              <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+                                              <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+                                              <meta name="format-detection" content="date=no" />
+                                              <meta name="format-detection" content="address=no" />
+                                              <meta name="format-detection" content="telephone=no" />
+                                              <meta name="x-apple-disable-message-reformatting" />
+                                              <link href="https://fonts.googleapis.com/css?family=Poppins:400,400i,700,700i" rel="stylesheet" />
+                                              <style type="text/css" media="screen">
+                                                  body { padding:0 !important; margin:0 !important; display:block !important; min-width:100% !important; width:100% !important; background:#FFF; -webkit-text-size-adjust:none }
+                                                  a { color:#66c7ff; text-decoration:none }
+                                                  p { padding:0 !important; margin:0 !important }
+                                                  img { -ms-interpolation-mode: bicubic; }
+                                                  .mcnPreviewText { display: none !important; }
+                                                  @media only screen and (max-device-width: 480px), only screen and (max-width: 480px) {
+                                                      .mobile-shell { width: 100% !important; min-width: 100% !important; }
+                                                      .bg { background-size: 100% auto !important; -webkit-background-size: 100% auto !important; }
+                                                      .text-nav,
+                                                      .text-header,
+                                                      .m-center { text-align: center !important;line-height: 36px;}
+                                                      .execTitle { border: none !important; }
+                                                      .center { margin: 0 auto !important; }
+                                                      .container { padding: 10px 10px 10px 10px !important }
+                                                      .td { width: 100% !important; min-width: 100% !important; }
+                                                      .mbr img { border-radius: 8px !important; }
+                                                      .brl  { border-radius: 10px !important; }
+                                                      .brr  { border-radius: 10px !important; }
+                                                      .text-nav { line-height: 28px !important; }
+                                                      .p30 { padding: 15px !important; }
+                                                      .m-br-15 { height: 15px !important; }
+                                                      .p30-15 { padding: 30px 15px !important; }
+                                                      .p40 { padding: 20px !important; }
+                                                      .m-td,
+                                                      .m-hide { display: none !important; width: 0 !important; height: 0 !important; font-size: 0 !important; line-height: 0 !important; min-height: 0 !important; }
+                                                      .m-block { display: block !important; }
+                                                      .fluid-img img { width: 100% !important; max-width: 100% !important; height: auto !important; }
+                                                      .column,
+                                                      .column-dir,
+                                                      .column-top,
+                                                      .column-empty,
+                                                      .column-empty2,
+                                                      .column-dir-top { float: left !important; width: 100% !important; display: block !important; }
+                                                      .column-empty { padding-bottom: 10px !important; }
+                                                      .column-empty2 { padding-bottom: 20px !important; }
+                                                      .content-spacing { width: 15px !important; }
+                                                  }
+                                              </style>
+                                          </head>
+
+                                          <body class="body" style="padding:0 !important; margin:0 !important; display:block !important; min-width:100% !important; width:100% !important; background:#FFF; -webkit-text-size-adjust:none;">
+                                              <table width="100%" border="0" cellspacing="0" cellpadding="0" bgcolor="#e1dad3">
+                                                  <tr>
+                                                      <td align="center" valign="top">
+                                                          <table width="650" border="0" cellspacing="0" cellpadding="0" class="mobile-shell">
+                                                              <tr>
+                                                                  <td class="td container" style="width:650px; min-width:650px; font-size:0pt; line-height:0pt; margin:0; font-weight:normal; padding:10px 0px 40px 0px;">
+                                                                      <!-- Header -->
+                                                                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                          <tr>
+                                                                              <td class="p30-15 tbrr" style="padding:10px 10px 10px 40px; border-radius:10px 10px 0px 0px;" bgcolor="#FFF">
+                                                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                      <tr>
+                                                                                          <th class="column-top" width="100%" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; vertical-align:middle;">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="fluid-img" style="font-size:0pt; line-height:0pt; text-align:left;">
+                                                                                                          <img src="https://i.imgur.com/Xj75qVc.png" width="85" height="53" border="0" alt="" />
+                                                                                                      </td>
+                                                                                                      <td class="text-header" style="font-family:'Segoe UI';letter-spacing:2px; font-size:30px; line-width:36px; text-align:center ;">
+                                                                                                          ${resultado}
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                          <th class="column-empty" width="1" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; vertical-align:top;">
+                                                                                          </th>
+                                                                                          <th class="column" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal;">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="text-header" style="color:#e1dad3; font-family:'Segoe UI'; font-size:12px; line-height:16px; text-align:center; text-transform:uppercase;">
+                                                                                                          <a href="#" target="_blank" class="link-white" style="color:#ffffff; text-decoration:none;text-align:center;">
+                                                                                                              <b>
+                                                                                                                  <span class="link-white" style="color:#6C6C62; text-decoration:none;">
+                                                                                                                      ${timeInicioPruebas}
+                                                                                                                  </span>
+                                                                                                              </b>
+                                                                                                          </a>
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                      </tr>
+                                                                                  </table>
+                                                                              </td>
+                                                                          </tr>
+                                                                      </table>
+                                                                      <!-- END Header -->
+
+                                                                      <!-- Logo + Resultado ejecución -->
+                                                                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                          <tr>
+                                                                              <td class="p30-15" style="padding: 25px 30px;" bgcolor="#E3E829" align="center">
+                                                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                      <tr>
+                                                                                          <th class="column" width="140" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal;">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="img m-center" style="font-size:0pt; line-height:0pt; text-align:left;">
+                                                                                                          <img src="https://www.proteccion.com/wps/contenthandler/proteccion/!ut/p/digest!xRrH_CvQ0ydHO_f9fYRcYA/dav/fs-type1/themes/TemaProteccion/images/logo-prote-cabezote.png" width="116" height="20" border="0" alt="" />
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                          <th class="column-empty" width="1" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; vertical-align:top;">
+                                                                                          </th>
+                                                                                          <th class="column" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal;max-width:350px">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="text-nav" style="line-height:18px; text-align:center; text-transform:uppercase;">
+                                                                                                          <span style="color:#032d9f; font-family:'Segoe UI';letter-spacing:2px; font-size:14px; word-wrap: break-word;">
+                                                                                                              <b>TRANSACCION: <br>${NOMBRE_TRANSACCION}</b>
+                                                                                                          </span>
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                      </tr>
+                                                                                  </table>
+                                                                              </td>
+                                                                          </tr>
+                                                                      </table>
+                                                                      <!-- END Logo + Resultado ejecución -->
+
+                                                                      <!-- Hero -->
+                                                                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                          <tr>
+                                                                              <td style="padding-bottom: 10px;">
+                                                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                      <tr>
+                                                                                          <td class="fluid-img" style="font-size:0pt; line-height:0pt; text-align:left;">
+                                                                                          </td>
+                                                                                      </tr>
+                                                                                      <tr>
+                                                                                          <td class="p30-15 bbrr" style="padding: 40px; border-radius:0px 0px 10px 10px;" bgcolor="#00ABC7">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="h2 pb15" style="color:#ddf638; font-family:'Poppins', Arial,sans-serif; font-size:18px; line-height:34px; text-align:left; padding-bottom:15px;max-width: 500px;word-break: break-all;">
+                                                                                                          <b>Job:</b> '${env.JOB_NAME} [${env.BUILD_NUMBER}]'
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                                  <tr>
+                                                                                                      <td class="text" style="color:#FFF; font-family:'Poppins', Arial,sans-serif; font-size:15px; line-height:30px; text-align:left;">
+                                                                                                          ${hero}
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </td>
+                                                                                      </tr>
+                                                                                  </table>
+                                                                              </td>
+                                                                          </tr>
+                                                                      </table>
+                                                                      <!-- END Hero -->
+
+                                                                      <!-- Jenkins -->
+                                                                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                          <tr>
+                                                                              <td style="padding-bottom: 10px;">
+                                                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" dir="rtl" style="direction: rtl;">
+                                                                                      <tr>
+                                                                                          <th class="column-dir" dir="ltr" width="245" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; direction:ltr;background:#f6efe7;border-radius:0px 10px 10px 0px">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="fluid-img mbr" style="font-size:0pt; line-height:0pt; text-align:center;">
+                                                                                                          <img src="https://i.imgur.com/5zc24YS.png" border="0" alt="" />
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                          <th class="column-dir" dir="ltr" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; direction:ltr;">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="p30-15 brl" style="padding: 20px; border-radius:10px 0px 0px 10px;" bgcolor="#ffffff" height="100">
+                                                                                                          <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                              <tr>
+                                                                                                                  <td class="h3 pb20" style="color:#445942; font-family:'Poppins', Arial,sans-serif; font-size:14px; line-height:24px; text-align:center; padding-bottom:20px;">
+                                                                                                                      Conozca el estado de la ejecución en Jenkins.
+                                                                                                                  </td>
+                                                                                                              </tr>
+
+                                                                                                              <!-- Button -->
+                                                                                                              <tr>
+                                                                                                                  <td align="center">
+                                                                                                                      <table border="0" cellspacing="0" cellpadding="0">
+                                                                                                                          <tr>
+                                                                                                                              <td class="text-button" style="background:#E3E829; color:#ffffff; font-family:'Poppins', Arial,sans-serif; font-size:14px; line-height:18px; padding:12px 30px; text-align:center; border-radius:22px;">
+                                                                                                                                  <a href="${env.BUILD_URL}" target="_blank" class="link-white" style="color:#ffffff; text-decoration:none;">
+                                                                                                                                      <span class="link-white" style="color:#032d9f; text-decoration:none;">
+                                                                                                                                          <b>Ir a Jenkins</b>
+                                                                                                                                      </span>
+                                                                                                                                  </a>
+                                                                                                                              </td>
+                                                                                                                          </tr>
+                                                                                                                      </table>
+                                                                                                                  </td>
+                                                                                                              </tr>
+                                                                                                              <!-- END Button -->
+                                                                                                          </table>
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                      </tr>
+                                                                                  </table>
+                                                                              </td>
+                                                                          </tr>
+                                                                      </table>
+                                                                      <!-- Jenkins -->
+
+                                                <!-- Serenity -->
+                                            <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                <tr>
+                                                    <td style="padding-bottom: 10px;">
+                                                        <table width="100%" border="0" cellspacing="0" cellpadding="0" dir="rtl" style="direction: rtl;">
+                                                            <tr>
+                                                                <th class="column-dir" dir="ltr" width="245" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; direction:ltr;background:#f6efe7;border-radius:0px 10px 10px 0px">
+                                                                    <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                        <tr>
+                                                                            <td class="fluid-img mbr" style="font-size:0pt; line-height:0pt; text-align:center;">
+                                                                                <img src="https://i.imgur.com/zuIbUrp.png" title="source: imgur.com" border="0" alt="serenity.logo" />
+                                                                            </td>
+                                                                        </tr>
+                                                                    </table>
+                                                                </th>
+                                                                <th class="column-dir" dir="ltr" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; direction:ltr;">
+                                                                    <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                        <tr>
+                                                                            <td class="p30-15 brl" style="padding: 20px; border-radius:10px 0px 0px 10px;" bgcolor="#ffffff" height="100">
+                                                                                <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                    <tr>
+                                                                                        <td class="h3 pb20" style="color:#445942; font-family:'Poppins', Arial,sans-serif; font-size:14px; line-height:24px; text-align:center; padding-bottom:20px;">
+                                                                                            Conozca el informe del resultado de la ejecuci&oacute;n con Serenity.
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                    <!-- Button -->
+                                                                                    <tr>
+                                                                                        <td align="center">
+                                                                                            <table border="0" cellspacing="0" cellpadding="0">
+                                                                                                <tr>
+                                                                                                    <td class="text-button" style="background:#E3E829; color:#ffffff; font-family:'Poppins', Arial,sans-serif; font-size:14px; line-height:18px; padding:12px 30px; text-align:center; border-radius:22px;">
+                                                                                                        <a href="${urlEvidencia}" target="_blank" class="link-white" style="color:#ffffff; text-decoration:none;">
+                                                                                                            <span class="link-white" style="color:#032d9f; text-decoration:none;">
+                                                                                                                <b>Ir al informe</b>
+                                                                                                            </span>
+                                                                                                        </a>
+                                                                                                    </td>
+                                                                                                </tr>
+                                                                                            </table>
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                    <!-- END Button -->
+                                                                                </table>
+                                                                            </td>
+                                                                        </tr>
+                                                                    </table>
+                                                                </th>
+                                                            </tr>
+                                                        </table>
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                            <!-- Serenity -->
+
+                                                                      <!-- Amazon-->
+                                                                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                          <tr>
+                                                                              <td style="padding-bottom: 10px;">
+                                                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" dir="rtl" style="direction: rtl;">
+                                                                                      <tr>
+                                                                                          <th class="column-dir" dir="ltr" width="245" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; direction:ltr;background:#f6efe7;border-radius:0px 10px 10px 0px">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="fluid-img mbr" style="font-size:0pt; line-height:0pt; text-align:center;">
+                                                                                                         <img src="https://d0.awsstatic.com/logos/powered-by-aws.png" border="0" alt="" />
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                          <th class="column-dir" dir="ltr" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; direction:ltr;">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="p30-15 brl" style="padding: 20px; border-radius:10px 0px 0px 10px;" bgcolor="#ffffff" height="100">
+                                                                                                          <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                              <tr>
+                                                                                                                  <td class="h3 pb20" style="color:#445942; font-family:'Poppins', Arial,sans-serif; font-size:14px; line-height:24px; text-align:center; padding-bottom:20px;">
+                                                                                                                      Almacenamiento del reporte generado en Amazon Web Services
+                                                                                                                  </td>
+                                                                                                              </tr>
+
+                                                                                                              <!-- Button -->urlEvidencia
+                                                                                                              <tr>
+                                                                                                                  <td align="center">
+                                                                                                                      <table border="0" cellspacing="0" cellpadding="0">
+                                                                                                                          <tr>
+                                                                                                                              <td class="text-button" style="background:#E3E829; color:#ffffff; font-family:'Poppins', Arial,sans-serif; font-size:14px; line-height:18px; padding:12px 30px; text-align:center; border-radius:22px;">
+                                                                                                                                  <a href="${s3FullUrl}" target="_blank" class="link-white" style="color:#ffffff; text-decoration:none;">
+                                                                                                                                      <span class="link-white" style="color:#032d9f; text-decoration:none;">
+                                                                                                                                          <b>Ir al informe</b>
+                                                                                                                                      </span>
+                                                                                                                                  </a>
+                                                                                                                              </td>
+                                                                                                                          </tr>
+                                                                                                                      </table>
+                                                                                                                  </td>
+                                                                                                              </tr>
+                                                                                                          <!-- END Button -->
+                                                                                                          </table>
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                      </tr>
+                                                                                  </table>
+                                                                              </td>
+                                                                          </tr>
+                                                                      </table>
+                                                                      <!-- Amazon-->
+
+                              <!-- Amazon-->
+                                                                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                          <tr>
+                                                                              <td style="padding-bottom: 10px;">
+                                                                                  <table width="100%" border="0" cellspacing="0" cellpadding="0" dir="rtl" style="direction: rtl;">
+                                                                                      <tr>
+                                                                                          <th class="column-dir" dir="ltr" width="245" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; direction:ltr;background:#f6efe7;border-radius:0px 10px 10px 0px">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="fluid-img mbr" style="font-size:0pt; line-height:0pt; text-align:center;">
+                                                                                                          <img src="https://i.imgur.com/s7bHYgM.png" border="0" alt="" />
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                          <th class="column-dir" dir="ltr" style="font-size:0pt; line-height:0pt; padding:0; margin:0; font-weight:normal; direction:ltr;">
+                                                                                              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                  <tr>
+                                                                                                      <td class="p30-15 brl" style="padding: 20px; border-radius:10px 0px 0px 10px;" bgcolor="#ffffff" height="100">
+                                                                                                          <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                                                                                              <tr>
+                                                                                                                  <td class="h3 pb20" style="color:#445942; font-family:'Poppins', Arial,sans-serif; font-size:14px; line-height:24px; text-align:center; padding-bottom:20px;">
+                                                                                                                      Reporte de salud de codigo de la automatización
+                                                                                                                  </td>
+                                                                                                              </tr>
+
+                                                                                                              <!-- Button -->
+                                                                                                              <tr>
+                                                                                                                  <td align="center">
+                                                                                                                      <table border="0" cellspacing="0" cellpadding="0">
+                                                                                                                          <tr>
+                                                                                                                              <td class="text-button" style="background:#E3E829; color:#ffffff; font-family:'Poppins', Arial,sans-serif; font-size:14px; line-height:18px; padding:12px 30px; text-align:center; border-radius:22px;">
+                                                                                                                                  <a href="${SONAR_URL}" target="_blank" class="link-white" style="color:#ffffff; text-decoration:none;">
+                                                                                                                                      <span class="link-white" style="color:#032d9f; text-decoration:none;">
+                                                                                                                                          <b>Ir al informe</b>
+                                                                                                                                      </span>
+                                                                                                                                  </a>
+                                                                                                                              </td>
+                                                                                                                          </tr>
+                                                                                                                      </table>
+                                                                                                                  </td>
+                                                                                                              </tr>
+                                                                                                          <!-- END Button -->
+                                                                                                          </table>
+                                                                                                      </td>
+                                                                                                  </tr>
+                                                                                              </table>
+                                                                                          </th>
+                                                                                      </tr>
+                                                                                  </table>
+                                                                              </td>
+                                                                          </tr>
+                                                                      </table>
+                                                                      <!-- Amazon-->
+
+
+                                                                      <!-- Footer -->
+                                                                      <center>
+                                                                          <table  border="0" cellspacing="0" cellpadding="0">
+                                                                              <tr>
+                                                                                  <td class="p30-15 br" style="padding: 10px; border-radius:10px;" bgcolor="#f6efe7">
+                                                                                      <table border="0" cellspacing="0" cellpadding="0">
+                                                                                          <tr>
+                                                                                              <td class="text-footer1 pb10" style="color:#777777; font-family:'Poppins', Arial,sans-serif; font-size:12px; line-height:20px; text-align:left;">
+                                                                                                  Powered by:
+                                                                                              </td>
+                                                                                          </tr>
+                                                                                          <tr>
+                                                                                              <td class="fluid-img mbr" style="font-size:0pt; line-height:0pt; text-align:center;">
+                                                                                              <img src="https://i.imgur.com/C50Xqxx.png" border="0" alt="" />
+                                                                                          </tr>
+                                                                                      </table>
+                                                                                  </td>
+                                                                              </tr>
+                                                                          </table>
+                                                                      </center>
+                                                                      <!-- END Footer -->
+                                                                  </td>
+                                                              </tr>
+                                                          </table>
+                                                      </td>
+                                                  </tr>
+                                              </table>
+                                          </body>
+                                      </html>
+                                  """
+
+        emailext(
+            subject: "${asunto}",
+            body: "${body}",
+            to: "${recibe}"
+        )
+}
