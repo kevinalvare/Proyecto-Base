@@ -17,15 +17,15 @@ pipeline{
     }
 
     environment {
-        SCM_URL = "https://vostpmde37.proteccion.com.co:10443/GESTIONARMI_TEST/ms_rep_exp_resumen_anual_test.git"
+        SCM_URL = "https://github.com/kevinalvare/Proyecto-Base.git"
         SCM_CREDENTIALS = "Master_User"
         SCM_BRANCH = "master"
-        NOMBRE_PROYECTO_GIT = "MS_REP_EXP_RESUMEN_ANUAL"
+        NOMBRE_PROYECTO_GIT = "MS_REP_EXP_RESUANUAL"
         NOMBRE_TRANSACCION = "MS_REP_EXP_RESUMEN_ANUAL"
         EMAIL_DEVELOPERS_FAIL = "kevin.alvarez@sofka.com.co"
-        EMAIL_DEVELOPERS_SUCCESS = "kevin.alvarez@sofka.com.co; juan.cardonan@sofka.com.co"
+        EMAIL_DEVELOPERS_SUCCESS = "kevin.alvarez@sofka.com.co"
         S3_URL = "https://s3.console.aws.amazon.com/s3/buckets/s3devsecopsjenkins01/jobs"
-        SONAR_URL = "https://sonarqube.proteccion.com.co:9000/dashboard?id=MS_REP_EXP_RESUMEN_ANUAL"
+        SONAR_URL = "https://sonarqube.proteccion.com.co:9000/dashboard?id=NOMBRE_MICROSERVICIO"
         JAVA_HOME = "/usr/lib/jvm/java-11-openjdk-amd64"
         TIPO_EJECUCION = ""
         intTestURL = ""
@@ -53,7 +53,7 @@ stage('Ejecutar Pruebas') {
         withCredentials([
             usernamePassword(credentialsId: 'Artifactory-reader', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_PWD'),
             usernamePassword(credentialsId: 'Repositorio-Maven', usernameVariable: 'MAVEN_USER', passwordVariable: 'MAVEN_PASSWORD'),
-            usernamePassword(credentialsId: 'DB_SOFKA', usernameVariable:'USER_DB_SOFKA', passwordVariable:'PASSWORD_DB_SOFKA')
+            usernamePassword(credentialsId: 'DB_SOFKA', usernameVariable:'USER_DB', passwordVariable:'PASSWORD_DB')
         ]) {
             catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
                 script {
@@ -90,7 +90,7 @@ stage('Ejecutar Pruebas') {
                                withCredentials([
                                    usernamePassword(credentialsId: 'Artifactory-reader', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_PWD'),
                                    usernamePassword(credentialsId: 'Repositorio-Maven', usernameVariable: 'MAVEN_USER', passwordVariable: 'MAVEN_PASSWORD'),
-                                   usernamePassword(credentialsId: 'DB_SOFKA', usernameVariable:'USER_DB_SOFKA', passwordVariable:'PASSWORD_DB_SOFKA')
+                                   usernamePassword(credentialsId: 'DB', usernameVariable:'USER_DB', passwordVariable:'PASSWORD_DB')
                                ]) {
                                    script {
 

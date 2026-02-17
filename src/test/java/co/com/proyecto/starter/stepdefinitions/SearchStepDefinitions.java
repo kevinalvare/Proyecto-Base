@@ -1,7 +1,6 @@
 package co.com.proyecto.starter.stepdefinitions;
 
 import co.com.proyecto.starter.tasks.navigation.NavigateTo;
-import io.cucumber.java.en.And;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
@@ -35,51 +34,4 @@ public class SearchStepDefinitions {
         );
     }
 
-    @Given("the following books exist in the bookstore:")
-    public void theFollowingBooksExistInTheBookstore() {
-    }
-
-    @When("a user searches for {string}")
-    public void aUserSearchesFor(String arg0) {
-    }
-
-    @Then("they should see the following books:")
-    public void theyShouldSeeTheFollowingBooks() {
-    }
-
-    @Given("the bookstore has the following books:")
-    public void theBookstoreHasTheFollowingBooks() {
-    }
-
-    @Then("they should see a message {string}")
-    public void theyShouldSeeAMessage(String arg0) {
-    }
-
-    @Given("Tim has the following positions at the start of the day:")
-    public void timHasTheFollowingPositionsAtTheStartOfTheDay() {
-    }
-
-    @And("Tim has placed the following order:")
-    public void timHasPlacedTheFollowingOrder() {
-    }
-
-    @When("the consolidated daily positions are generated")
-    public void theConsolidatedDailyPositionsAreGenerated() {
-    }
-
-    @Then("Tim should see his new positions as follows:")
-    public void timShouldSeeHisNewPositionsAsFollows() {
-    }
-
-    @Given("the following customers with different credit risks:")
-    public void theFollowingCustomersWithDifferentCreditRisks() {
-    }
-
-    @When("the KYC risk calculator assesses the customers")
-    public void theKYCRiskCalculatorAssessesTheCustomers() {
-    }
-
-    @Then("the system should assign the following KYC levels:")
-    public void theSystemShouldAssignTheFollowingKYCLevels() {
-    }
 }
