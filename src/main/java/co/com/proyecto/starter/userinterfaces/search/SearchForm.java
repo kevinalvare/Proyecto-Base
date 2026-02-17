@@ -2,7 +2,8 @@ package co.com.proyecto.starter.userinterfaces.search;
 
 import net.serenitybdd.screenplay.targets.Target;
 
-class SearchForm {
-    static Target SEARCH_FIELD = Target.the("search field").locatedBy("#searchbox_input");
+public class SearchForm {
+    public static Target USUARIO = Target.the("search field").locatedBy("//*[@placeholder='Username']");
+    public static Target CONTRASENA = Target.the("search field").locatedBy("//*[@placeholder='Password']");
 
 }

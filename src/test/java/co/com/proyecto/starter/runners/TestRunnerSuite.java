@@ -9,12 +9,11 @@ import static io.cucumber.junit.CucumberOptions.SnippetType.CAMELCASE;
 
 @RunWith(CucumberWithSerenity.class)
 @CucumberOptions(
-        features = {"src/test/resources/features/search/search_by_different_keywords.feature"},
-        glue = "co/com/proyecto/starter/stepdefinitions",
+        features = {"src/test/resources/features/orangehrm_employee_registration.feature"},
+        glue = "co.com.proyecto.starter.stepdefinitions",
         snippets = CAMELCASE,
-        tags = "@green",
+        tags = "@orangehrm",
         plugin = {"rerun:target/TestRunner.txt"}
 )
-
 public class TestRunnerSuite {
 }
