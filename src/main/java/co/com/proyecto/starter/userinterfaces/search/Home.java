@@ -27,10 +27,6 @@ public class Home {
     public static Target SEARCH_BUTTON = Target.the("Search button")
             .located(By.xpath("//button[normalize-space()='Search']"));
 
-    public static Target PERSONAL_DETAILS_HEADER = Target.the("Personal Details header")
-            .located(By.xpath("//h6[normalize-space()='Personal Details']"));
-    public static Target EMPLOYEE_NAME_HEADER = Target.the("Employee name header")
-            .located(By.xpath("//div[contains(@class,'orangehrm-edit-employee-name')]//h6"));
     public static Target EMPLOYEE_ROW_FIRST = Target.the("Employee first row")
             .locatedBy("(//*[@class='oxd-table-row oxd-table-row--with-border oxd-table-row--clickable']/div[3])[1]");
     public static Target EMPLOYEE_RESULT = Target.the("Employee result")

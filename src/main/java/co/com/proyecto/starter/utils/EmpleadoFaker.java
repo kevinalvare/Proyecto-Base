@@ -20,7 +20,7 @@ public class EmpleadoFaker {
                 firstName.toLowerCase(Locale.ROOT),
                 lastName.toLowerCase(Locale.ROOT),
                 faker.number().numberBetween(10, 99));
-        String employeePass = faker.internet().password(8, 12, true, true, true);
+        String employeePass = "admin123";
 
         Empleado empleado = new Empleado();
         empleado.setFirstName(firstName);
@@ -32,4 +32,3 @@ public class EmpleadoFaker {
         return empleado;
     }
 }
-

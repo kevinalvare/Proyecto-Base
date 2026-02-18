@@ -5,7 +5,7 @@ import java.util.Date
 pipeline{
     parameters {
         choice choices: ['continuous2'], description: 'Agente en el cual se ejecutaran las pruebas', name: 'AGENTE_EJECUCION'
-        choice choices: ['@RUTA_CRITICA_BACK','@BACK'], description: 'Tipo de prueba funcional a ejecutar', name: 'Tiporegresion'
+        choice choices: ['@ORANGEHRM','@E2E'], description: 'Tipo de prueba funcional a ejecutar', name: 'Tiporegresion'
     }
 
     agent {
@@ -20,11 +20,11 @@ pipeline{
         SCM_URL = "https://github.com/kevinalvare/Proyecto-Base.git"
         SCM_CREDENTIALS = "Master_User"
         SCM_BRANCH = "master"
-        NOMBRE_PROYECTO_GIT = "MS_REP_EXP_RESUANUAL"
-        NOMBRE_TRANSACCION = "MS_REP_EXP_RESUMEN_ANUAL"
-        EMAIL_DEVELOPERS_FAIL = "kevin.alvarez@sofka.com.co"
-        EMAIL_DEVELOPERS_SUCCESS = "kevin.alvarez@sofka.com.co"
-        S3_URL = "https://s3.console.aws.amazon.com/s3/buckets/s3devsecopsjenkins01/jobs"
+        NOMBRE_PROYECTO_GIT = "RETO_TECNICO_QA"
+        NOMBRE_TRANSACCION = "RETO_TECNICO_QA"
+        EMAIL_DEVELOPERS_FAIL = "prueba@gmail.com.co"
+        EMAIL_DEVELOPERS_SUCCESS = "prueba@gmail.com.co"
+        S3_URL = "https://jenkins01/jobs"
         SONAR_URL = "https://sonarqube.proteccion.com.co:9000/dashboard?id=NOMBRE_MICROSERVICIO"
         JAVA_HOME = "/usr/lib/jvm/java-11-openjdk-amd64"
         TIPO_EJECUCION = ""
@@ -53,7 +53,7 @@ stage('Ejecutar Pruebas') {
         withCredentials([
             usernamePassword(credentialsId: 'Artifactory-reader', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_PWD'),
             usernamePassword(credentialsId: 'Repositorio-Maven', usernameVariable: 'MAVEN_USER', passwordVariable: 'MAVEN_PASSWORD'),
-            usernamePassword(credentialsId: 'DB_SOFKA', usernameVariable:'USER_DB', passwordVariable:'PASSWORD_DB')
+            usernamePassword(credentialsId: 'DB', usernameVariable:'USER_DB', passwordVariable:'PASSWORD_DB')
         ]) {
             catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
                 script {

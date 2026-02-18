@@ -1,13 +1,14 @@
 package co.com.proyecto.starter.stepdefinitions;
 
 
+import co.com.proyecto.starter.models.Empleado;
+import co.com.proyecto.starter.utils.EmpleadoFaker;
 import co.com.proyecto.starter.tasks.OpenSite;
 import co.com.proyecto.starter.tasks.iniciarsession.IniciarSesionFormulario;
 import co.com.proyecto.starter.userinterfaces.search.Home;
-import co.com.proyecto.starter.userinterfaces.search.LookForInformationEmpleado;
-import co.com.proyecto.starter.userinterfaces.search.Pim;
 import co.com.proyecto.starter.tasks.employee.RegisterEmployee;
 import co.com.proyecto.starter.tasks.employee.SearchEmployeeInPim;
+import co.com.proyecto.starter.questions.EmpleadoEnResultados;
 import net.serenitybdd.screenplay.Actor;
 import io.cucumber.java.Before;
 import io.cucumber.java.en.And;
@@ -17,12 +18,11 @@ import io.cucumber.java.en.When;
 import net.serenitybdd.screenplay.actors.OnStage;
 import net.serenitybdd.screenplay.actors.OnlineCast;
 import net.serenitybdd.screenplay.ensure.Ensure;
-import net.serenitybdd.screenplay.actions.Click;
-import net.serenitybdd.screenplay.questions.Attribute;
-import net.serenitybdd.screenplay.questions.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import net.serenitybdd.screenplay.waits.WaitUntil;
+import net.serenitybdd.screenplay.targets.Target;
+import org.openqa.selenium.By;
 
 import static net.serenitybdd.screenplay.matchers.WebElementStateMatchers.containsText;
 import static net.serenitybdd.screenplay.matchers.WebElementStateMatchers.isVisible;
@@ -30,6 +30,9 @@ import static net.serenitybdd.screenplay.matchers.WebElementStateMatchers.isVisi
 public class StepDefinitionEmployeeRegistration {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(StepDefinitionEmployeeRegistration.class);
+
+    private final EmpleadoFaker empleadoFaker = new EmpleadoFaker();
+    private Empleado empleadoActual;
 
     private Actor actor;
 
@@ -45,23 +48,39 @@ public class StepDefinitionEmployeeRegistration {
         actor.attemptsTo(IniciarSesionFormulario.about(usuario, clave));
     }
 
-    @When("el usuario registra al empleado {string} {string} {string} con login {string} y clave {string}")
-    public void elUsuarioRegistraAlEmpleadoConLoginYClave(String nombre, String segundoNombre, String apellido, String usuarioEmpleado, String claveEmpleado) {
+    @When("el usuario registra al empleado con datos generados")
+    public void elUsuarioRegistraAlEmpleadoConDatosGenerados() {
+        empleadoActual = empleadoFaker.generar();
+        LOGGER.info("Empleado generado: {} {} ({})", empleadoActual.getFirstName(), empleadoActual.getLastName(), empleadoActual.getEmployeeUser());
+
         actor.attemptsTo(
-                RegisterEmployee.withLoginDetails(nombre, segundoNombre, apellido, usuarioEmpleado, claveEmpleado)
+                RegisterEmployee.withLoginDetails(
+                        empleadoActual.getFirstName(),
+                        empleadoActual.getMiddleName(),
+                        empleadoActual.getLastName(),
+                        empleadoActual.getEmployeeUser(),
+                        empleadoActual.getEmployeePass()
+                )
         );
     }
 
-    @And("el usuario abre el modulo PIM y busca {string}")
-    public void elUsuarioAbreElModuloPIMYBusca(String nombreCompleto) {
-        actor.attemptsTo(SearchEmployeeInPim.byName(nombreCompleto));
+    @And("el usuario abre el modulo PIM y busca el empleado generado")
+    public void elUsuarioAbreElModuloPIMYBuscaElEmpleadoGenerado() {
+        String busqueda = empleadoActual != null ? empleadoActual.getFullName() : "";
+        Target employeeListHeader = Target.the("Employee list header").located(By.xpath("//*[@class='oxd-text oxd-text--h6 --strong']"));
+
+        actor.attemptsTo(
+                WaitUntil.the(employeeListHeader, isVisible()).forNoMoreThan(60).seconds(),
+                SearchEmployeeInPim.byName(busqueda)
+        );
     }
 
-    @Then("el empleado {string} debe aparecer en los resultados")
-    public void elEmpleadoDebeAparecerEnLosResultados(String nombreCompleto) {
-        String[] partes = nombreCompleto.trim().split("\\s+");
-        String nombre = partes.length > 0 ? partes[0] : nombreCompleto;
-        String apellido = partes.length > 1 ? partes[partes.length - 1] : nombreCompleto;
+    @Then("el empleado generado debe aparecer en los resultados")
+    public void elEmpleadoGeneradoDebeAparecerEnLosResultados() {
+        String esperado = empleadoActual != null ? empleadoActual.getFullName() : "";
+        String[] partes = esperado.trim().split("\\s+");
+        String nombre = partes.length > 0 ? partes[0] : esperado;
+        String apellido = partes.length > 1 ? partes[partes.length - 1] : esperado;
 
         actor.attemptsTo(
                 WaitUntil.the(Home.EMPLOYEE_ROW_FIRST, isVisible()).forNoMoreThan(30).seconds(),
@@ -69,11 +88,13 @@ public class StepDefinitionEmployeeRegistration {
                 WaitUntil.the(Home.EMPLOYEE_LAST_NAME_FIRST, containsText(apellido)).forNoMoreThan(30).seconds()
         );
 
-        String nombreEnFila = Text.of(Home.EMPLOYEE_ROW_FIRST).answeredBy(actor);
-        String apellidoEnFila = Text.of(Home.EMPLOYEE_LAST_NAME_FIRST).answeredBy(actor);
-        LOGGER.info("PIM row first name text: '{}'", nombreEnFila);
-        LOGGER.info("PIM row last name text: '{}'", apellidoEnFila);
+        Boolean empleadoEncontrado = actor.asksFor(EmpleadoEnResultados.conNombreYApellido(nombre, apellido));
+        LOGGER.info("Empleado encontrado en resultados: {}", empleadoEncontrado);
 
+        actor.attemptsTo(
+                Ensure.that(empleadoEncontrado).isTrue()
+        );
     }
 
- }
+
+}
